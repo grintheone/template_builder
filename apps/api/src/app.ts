@@ -1,3 +1,4 @@
+import { registerDocumentRoutes } from './routes/documents.js';
 import Fastify from 'fastify';
 import multipart from '@fastify/multipart';
 import { MAX_VALUES_BYTES } from '@studio/shared';
@@ -17,6 +18,7 @@ export function buildApp(config: AppConfig, readiness: () => Promise<HealthRespo
   } });
   registerHealthRoute(app, readiness);
   registerDevRenderRoute(app, maxUploadBytes);
+  registerDocumentRoutes(app, config, maxUploadBytes);
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof DocxError) {
       return reply.code(error.code === 'UPLOAD_TOO_LARGE' ? 413 : 422).send({ code: error.code, message: error.message });

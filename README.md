@@ -1,6 +1,6 @@
 # Local AI DOCX Template Studio
 
-A single-user web app for working with reusable DOCX templates on your computer. **Phases 1 and 2 are implemented:** local services and a deterministic rendering proof of concept for DOCX files that already contain `[[snake_case]]` tags.
+A single-user web app for working with reusable DOCX templates on your computer. **Phases 1–3 are implemented:** local services, deterministic rendering of already-tagged DOCX files, and immutable DOCX import with source indexing.
 
 ## Requirements and launch
 
@@ -18,6 +18,20 @@ pnpm dev
 Open **http://127.0.0.1:5173**. Fastify listens on **http://127.0.0.1:3001**. Vite proxies `/api` to Fastify, so the browser uses same-origin requests without a CORS workaround. `pnpm dev` first builds the shared package, then starts both servers with file watching. Stop both with Ctrl+C. If shared contracts change, restart `pnpm dev` to rebuild them.
 
 The API creates `data/app.sqlite`, applies committed migrations, and creates `data/storage/` on startup. Nothing needs to be seeded. Runtime data, SQLite sidecars, environment secrets, dependencies, and build artifacts are gitignored.
+
+## Import and inspect a DOCX
+
+Start with `pnpm dev`, open **http://127.0.0.1:5173**, and use **Import a source DOCX**. Choose a standard `.docx` and click **Import and inspect**. The page displays the saved document ID, SHA-256 hash, source paragraphs and structural warnings. The existing `pnpm demo:fixture` sample can also be imported; its tags are treated as ordinary source text.
+
+`POST /api/documents` accepts multipart/form-data with exactly one file in the `document` field and no additional fields. It returns HTTP 201 with `{ documentId, sourceHash }`. `GET /api/documents/:id/blocks` returns those identifiers plus `blocks` and document-level `warnings`. Invalid IDs return 400; missing documents return 404. Both responses disable caching. Upload limits return 413; unsupported or invalid documents return sanitized 422 errors.
+
+Original uploads are stored byte-for-byte under `data/storage/originals/<server-generated-uuid>.docx`, with exclusive creation and read-only owner permissions. SQLite stores their private path, hash and creation time. The original filename is never used as a storage path. Re-reading an index verifies the hash first; a changed/missing source fails with a sanitized error. Restarting the API retains documents and stable block IDs. There is no source-edit or delete endpoint.
+
+Indexing covers body paragraphs, table cells, numbered headers/footers, repeated text, Unicode, split runs and blank paragraphs. A block ID combines the original part path and zero-based paragraph index; `location` records table/row/cell ancestry. `spans` maps UTF-16 start/end offsets into the block text to the zero-based `<w:t>` element index in the original XML part. It includes all text nodes when assigning indices, so later code can recover the exact nodes by parsing the immutable part. No XML is rewritten during import.
+
+Tracked changes, field codes, text boxes, drawings, content controls, hidden text and unknown paragraph structures require manual review. Affected blocks are marked unsupported; their extracted text may be incomplete and cannot be treated as a safe replacement span. Tabs and breaks retain display offsets but disable replacement for the paragraph. Nested text-box paragraphs are indexed separately. Footnotes/endnotes remain preserved but are not indexed. Package-level warnings identify unsupported constructs even when they contain no paragraph. Macro/embedded-object packages, unsupported OPC parts, encryption, invalid XML and unsafe ZIP paths are rejected outright. The index has a 20,000 paragraph limit in addition to package limits.
+
+This phase does not call AI, resolve replacements, compile templates or provide a Word-layout preview.
 
 ## Try the Phase 2 DOCX renderer
 
@@ -72,10 +86,10 @@ The API loads the root `.env` regardless of its working directory. Existing envi
 | `OLLAMA_MODEL` | `qwen3:8b` |
 | `DATABASE_PATH` | `./data/app.sqlite` |
 | `STORAGE_DIR` | `./data/storage` |
-| `MAX_UPLOAD_MB` | `15`; maximum tagged DOCX upload size in MiB |
+| `MAX_UPLOAD_MB` | `15`; maximum DOCX upload size in MiB |
 | `SOFFICE_PATH` | `soffice` on PATH, or the explicit executable path in `.env.example` |
 
-Database and storage paths resolve relative to the repository and must stay inside `data/`; existing symlink paths are rejected. Keep `.env` private. The rendering route processes uploads and results in memory without saving them. The demo-fixture command explicitly writes its sample under `data/storage/`. Browser downloads go to your browser's configured download location.
+Database and storage paths resolve relative to the repository and must stay inside `data/`; existing symlink paths are rejected. Keep `.env` private. The development rendering route processes uploads and results in memory without saving them. The import route retains immutable originals on private local disk. The demo-fixture command explicitly writes its sample under `data/storage/`. Browser downloads go to your browser's configured download location.
 
 For optional local services on macOS, install/launch Ollama using its official app, then run `ollama pull qwen3:8b`. Install LibreOffice and set `SOFFICE_PATH=/Applications/LibreOffice.app/Contents/MacOS/soffice` if it is not on PATH. This phase checks the binary using `--version`; actual PDF conversion is a later milestone.
 
@@ -93,7 +107,7 @@ pnpm build
 pnpm db:migrate
 ```
 
-`pnpm lint` uses Biome with Tailwind-aware parsing. `pnpm test` builds shared contracts first and runs shared-schema and API tests, including mocked offline services, invalid configuration, sanitized errors, migration persistence, generated DOCX fixtures, rendering/formatting preservation, and multipart failure cases. Tests do not require Ollama or LibreOffice. Database tests create and remove isolated temporary databases under ignored `data/storage/`.
+`pnpm lint` uses Biome with Tailwind-aware parsing. `pnpm test` builds shared contracts first and runs shared-schema and API tests, including mocked offline services, invalid configuration, sanitized errors, migration and source persistence, generated DOCX fixtures, indexing and split-run offsets, source integrity failures, rendering/formatting preservation, and multipart failure cases. Tests do not require Ollama or LibreOffice. Database tests create and remove isolated temporary databases under ignored `data/storage/`.
 
 `pnpm db:generate` generates a Drizzle migration from API schema changes; inspect and commit the SQL and metadata. `pnpm db:migrate` applies committed migrations; startup also applies them idempotently.
 
@@ -124,4 +138,4 @@ There is no cloud AI, external document service, telemetry, or remote font depen
 - LibreOffice unavailable: check installation and the executable path. DOCX rendering still works without it. PDF export is a later milestone.
 - Native SQLite installation fails: use a supported Node LTS and reinstall dependencies. A compiler toolchain may be needed if a prebuilt binary is unavailable. pnpm is configured to allow the required SQLite/esbuild install scripts.
 
-Next milestone: **Phase 3 — DOCX import and source indexing**. Immutable document storage, indexing, AI detection, template compilation, library forms and PDF export have not been implemented.
+Next milestone: **Phase 4 — Ollama-backed AI field suggestions**. AI detection, field review, template compilation, library forms and PDF export have not been implemented.

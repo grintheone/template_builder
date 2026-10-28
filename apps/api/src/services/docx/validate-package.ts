@@ -27,7 +27,7 @@ function invalid(): never {
   throw new DocxError('INVALID_DOCX', 'The file is not a valid, unencrypted DOCX package.');
 }
 function unsupported(): never {
-  throw new DocxError('UNSUPPORTED_DOCX', 'This DOCX contains parts or structures outside the rendering proof of concept. Use a standard DOCX with body, table, header, and footer text.');
+  throw new DocxError('UNSUPPORTED_DOCX', 'This DOCX contains parts or structures outside the supported package allowlist. Use a standard DOCX with body, table, header, and footer text.');
 }
 
 function openZip(buffer: Buffer): Promise<ZipFile> {
@@ -96,7 +96,7 @@ export function parseXml(buffer: Buffer) {
   return new DOMParser({ onError: () => { throw new Error('Invalid XML'); } }).parseFromString(text, 'application/xml');
 }
 
-export async function validatePackage(source: Buffer, maxUploadBytes: number): Promise<Map<string, Buffer>> {
+export async function validatePackage(source: Buffer, maxUploadBytes: number, mode: 'render' | 'import' = 'render'): Promise<Map<string, Buffer>> {
   if (source.length > maxUploadBytes) throw new DocxError('UPLOAD_TOO_LARGE', 'The DOCX exceeds the configured upload size limit.');
   if (source.length < 4 || source.readUInt32LE(0) !== 0x04034b50) invalid();
   try {
@@ -118,12 +118,12 @@ export async function validatePackage(source: Buffer, maxUploadBytes: number): P
         if (expectedRoot === 'document' && document.getElementsByTagNameNS(WORD_NS, 'body').length !== 1) invalid();
         // Rendering fields inside tracked edits, text boxes or field codes is out of scope.
         for (const tag of ['ins', 'del', 'moveFrom', 'moveTo', 'txbxContent', 'fldSimple', 'instrText', 'altChunk']) {
-          if (document.getElementsByTagNameNS(WORD_NS, tag).length) unsupported();
+          if (mode === 'render' && document.getElementsByTagNameNS(WORD_NS, tag).length) unsupported();
         }
       } else if (path.endsWith('.xml') && path !== '[Content_Types].xml') {
         // Never silently leave tags in notes, metadata or other unrendered parts.
         const visible = Array.from(document.getElementsByTagNameNS(WORD_NS, 't')).map((node) => node.textContent).join('');
-        if (visible.includes('[[') || visible.includes(']]')) unsupported();
+        if (mode === 'render' && (visible.includes('[[') || visible.includes(']]'))) unsupported();
       }
       if (path.endsWith('.rels')) {
         const relationships = Array.from(document.getElementsByTagNameNS('http://schemas.openxmlformats.org/package/2006/relationships', 'Relationship'));
