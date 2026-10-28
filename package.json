@@ -1,0 +1,25 @@
+{
+  "name": "local-docx-studio",
+  "private": true,
+  "packageManager": "pnpm@10.14.0",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @studio/shared build && concurrently --kill-others-on-fail --names api,web \"pnpm --filter @studio/api dev\" \"pnpm --filter @studio/web dev\"",
+    "lint": "biome lint .",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm --filter @studio/shared build && pnpm -r test",
+    "build": "pnpm -r build",
+    "start": "pnpm --filter @studio/api start",
+    "db:migrate": "pnpm --filter @studio/api db:migrate",
+    "db:generate": "pnpm --filter @studio/api db:generate"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "concurrently": "^9.2.1",
+    "@types/node": "^22.18.0",
+    "@biomejs/biome": "^2.6.3"
+  },
+  "type": "module"
+}
