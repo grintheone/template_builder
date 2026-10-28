@@ -14,7 +14,8 @@ const envSchema = z.object({
     const url = new URL(value);
     return ['http:', 'https:'].includes(url.protocol) && ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) && !url.username && !url.password && !url.search && !url.hash;
   }, 'Ollama must use a local loopback endpoint').default('http://127.0.0.1:11434'),
-  OLLAMA_MODEL: z.string().trim().min(1).default('qwen3:8b'),
+  OLLAMA_MODEL: z.string().trim().min(1).max(200).refine((value) => !/cloud/i.test(value), 'Cloud models are not allowed').default('qwen3:8b'),
+  ANALYSIS_TIMEOUT_MS: z.coerce.number().int().min(1000).max(600000).default(120000),
   DATABASE_PATH: z.string().min(1).default('./data/app.sqlite'),
   STORAGE_DIR: z.string().min(1).default('./data/storage'),
   MAX_UPLOAD_MB: z.coerce.number().positive().max(100).default(15),

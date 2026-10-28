@@ -13,6 +13,7 @@ describe('local configuration', () => {
     { OLLAMA_BASE_URL: 'https://example.com' }, { OLLAMA_BASE_URL: 'file://localhost/tmp' },
     { DATABASE_PATH: '../private.sqlite' }, { STORAGE_DIR: './data/../../outside' },
     { MAX_UPLOAD_MB: '-1' },
+    { OLLAMA_MODEL: 'qwen3:cloud' }, { ANALYSIS_TIMEOUT_MS: '0' }, { ANALYSIS_TIMEOUT_MS: '600001' },
   ])('rejects unsafe settings: %o', (env) => {
     expect(() => readConfig(env)).toThrow();
   });

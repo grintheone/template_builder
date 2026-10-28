@@ -53,7 +53,7 @@ describe('document import API', () => {
   it.each(['source.doc', 'source.docm', 'source.zip'])('rejects %s without storing a source', async (name) => {
     const { app, config } = setup();
     expect((await app.inject(upload(undefined, name))).statusCode).toBe(422);
-    expect(readdirSync(resolve(config.STORAGE_DIR, '..'))).not.toContain('files');
+    expect(readdirSync(config.STORAGE_DIR)).toEqual([]);
   });
   it.each(['invalid zip', 'missing main', 'traversal', 'unknown part', 'malformed XML', 'expanded size', 'encrypted'])('rejects %s', async (kind) => {
     const { app } = setup();

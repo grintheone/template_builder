@@ -1,11 +1,11 @@
 # Local AI DOCX Template Studio
 
-A single-user web app for working with reusable DOCX templates on your computer. **Phases 1–3 are implemented:** local services, deterministic rendering of already-tagged DOCX files, and immutable DOCX import with source indexing.
+A single-user web app for working with reusable DOCX templates on your computer. **Phases 1–4 are implemented:** local services, deterministic rendering of already-tagged DOCX files, immutable source import/indexing, and Ollama-backed field suggestions through an asynchronous API.
 
 ## Requirements and launch
 
 - Node.js **22.12 or later** (a supported LTS recommended), pnpm **10.14.0**.
-- Ollama and LibreOffice are optional for these phases. DOCX rendering and automated tests work without them.
+- Ollama with the configured local model is required for AI analysis. Import, tagged DOCX rendering and automated tests work without it. LibreOffice remains optional.
 
 From the repository root:
 
@@ -31,7 +31,27 @@ Indexing covers body paragraphs, table cells, numbered headers/footers, repeated
 
 Tracked changes, field codes, text boxes, drawings, content controls, hidden text and unknown paragraph structures require manual review. Affected blocks are marked unsupported; their extracted text may be incomplete and cannot be treated as a safe replacement span. Tabs and breaks retain display offsets but disable replacement for the paragraph. Nested text-box paragraphs are indexed separately. Footnotes/endnotes remain preserved but are not indexed. Package-level warnings identify unsupported constructs even when they contain no paragraph. Macro/embedded-object packages, unsupported OPC parts, encryption, invalid XML and unsafe ZIP paths are rejected outright. The index has a 20,000 paragraph limit in addition to package limits.
 
-This phase does not call AI, resolve replacements, compile templates or provide a Word-layout preview.
+Import and indexing do not call AI. Analysis is a separate explicit API action below. The review UI, template compilation and Word-layout previews are not implemented.
+
+## Analyze with local Ollama (Phase 4 API)
+
+Install/start Ollama and download the configured local model (`ollama pull qwen3:8b`). After importing a source in the dashboard, copy its document ID. Start analysis with an empty POST body:
+
+```sh
+curl --fail-with-body -X POST http://127.0.0.1:3001/api/documents/DOCUMENT_ID/analyze
+# Returns HTTP 202: {"jobId":"..."}; Location points to the polling endpoint.
+curl --fail-with-body http://127.0.0.1:3001/api/analysis-jobs/JOB_ID
+```
+
+Replace `DOCUMENT_ID` and `JOB_ID` with the returned UUIDs. Poll about once per second until `status` is `done` or `failed`. Responses disable caching. Job records contain the source hash, configured model, timestamps, status, and either `result` or a sanitized `error`. Suggestions include snake_case keys, labels, scalar types, required flags, confidence, and explicit source occurrences. Each occurrence retains `blockId`, exact `quote`, optional adjacent context and a generated ID. A `resolved` occurrence has UTF-16 `start`/`end` offsets; an `unresolved` occurrence has a reason and no offsets. Neither status constitutes human approval.
+
+Missing quotes, unknown block IDs, ambiguous repeated quotes, mismatched context, unsupported blocks and conflicting type/required metadata remain unresolved for review. Same-key occurrences are merged and exact duplicates removed; conflicting metadata requires review. Different keys with the same meaning are not automatically combined. Overlap validation and final XML-span safety belong to Phase 5. No replacement, source mutation, template publication or rendering is performed by analysis. The dashboard still provides import and extracted text only; starting/polling/review UI is Phase 5.
+
+Jobs are persisted in SQLite before work starts. One job runs at a time with up to eight queued/admitting requests; excess requests return 429 with `Retry-After`. Repeated requests for the same active document return the existing job ID when capacity is available. Completed results and failures survive restarts. Pending/running jobs found at startup, or left at shutdown, become `failed` with `INTERRUPTED`; explicitly start a new analysis to retry. Invalid IDs/bodies return 400; missing documents/jobs return 404. Source-integrity failures return a sanitized 422 before queuing or a failed job if detected during processing.
+
+The detector uses the official Ollama client with JSON Schema output, temperature 0, no tools and thinking disabled. Indexed text is explicitly marked as untrusted document data in a separate user message. Only the configured loopback endpoint is contacted, redirects are refused, and cloud-named models are rejected by configuration. Configure a downloaded local model. Prompt instructions cannot guarantee model behavior: Zod and deterministic source matching check its output, and a person must assess every suggestion. Schema violations and malformed/truncated JSON fail the whole job rather than silently dropping candidates.
+
+Limits: whole source blocks are chunked into at most 64 requests of 12,000 serialized characters each; oversized individual blocks fail explicitly rather than being truncated. Blank blocks are skipped. The model response body is capped at 1 MiB before JSON parsing, each request permits up to 8,192 generated tokens, and analysis retains at most 500 keys and 2,000 distinct occurrences overall (1,000 per key). The entire job, including source verification and all chunks, defaults to a 120-second timeout. Cancellation aborts non-streaming HTTP requests. Raise `ANALYSIS_TIMEOUT_MS` (1,000–600,000) or use a smaller document when needed. A failure saves no partial suggestions. Errors distinguish offline Ollama, missing model, invalid output, limits, timeout and interrupted work; raw model/network errors are never logged or returned.
 
 ## Try the Phase 2 DOCX renderer
 
@@ -83,7 +103,8 @@ The API loads the root `.env` regardless of its working directory. Existing envi
 | `HOST` | `127.0.0.1`; external bindings are rejected |
 | `API_PORT` | `3001`; Vite uses the same configured port |
 | `OLLAMA_BASE_URL` | `http://127.0.0.1:11434`; only loopback HTTP(S) endpoints are accepted |
-| `OLLAMA_MODEL` | `qwen3:8b` |
+| `OLLAMA_MODEL` | `qwen3:8b`; downloaded local models only, cloud-named models rejected |
+| `ANALYSIS_TIMEOUT_MS` | `120000`; whole-job deadline, 1,000–600,000 milliseconds |
 | `DATABASE_PATH` | `./data/app.sqlite` |
 | `STORAGE_DIR` | `./data/storage` |
 | `MAX_UPLOAD_MB` | `15`; maximum DOCX upload size in MiB |
@@ -107,7 +128,7 @@ pnpm build
 pnpm db:migrate
 ```
 
-`pnpm lint` uses Biome with Tailwind-aware parsing. `pnpm test` builds shared contracts first and runs shared-schema and API tests, including mocked offline services, invalid configuration, sanitized errors, migration and source persistence, generated DOCX fixtures, indexing and split-run offsets, source integrity failures, rendering/formatting preservation, and multipart failure cases. Tests do not require Ollama or LibreOffice. Database tests create and remove isolated temporary databases under ignored `data/storage/`.
+`pnpm lint` uses Biome with Tailwind-aware parsing. `pnpm test` builds shared contracts first and runs shared-schema and API tests, including mocked offline services and Ollama suggestions, quote resolution, untrusted prompt boundaries, chunking/deduplication, timeout cancellation, durable job recovery/queue limits, invalid configuration, sanitized errors, migration and source persistence, generated DOCX fixtures, indexing and split-run offsets, source integrity failures, rendering/formatting preservation, and multipart failure cases. Tests do not require Ollama or LibreOffice. Database tests create and remove isolated temporary databases under ignored `data/storage/`.
 
 `pnpm db:generate` generates a Drizzle migration from API schema changes; inspect and commit the SQL and metadata. `pnpm db:migrate` applies committed migrations; startup also applies them idempotently.
 
@@ -128,7 +149,7 @@ Open http://127.0.0.1:4173. `pnpm start` runs the built API; Vite preview proxie
 - `apps/api`: Fastify, bounded multipart uploads, DOCX package validation, Docxtemplater/PizZip renderer, local readiness services, and SQLite/Drizzle migrations.
 - `packages/shared`: shared Zod health, render-value and error contracts with inferred TypeScript types.
 
-There is no cloud AI, external document service, telemetry, or remote font dependency. Readiness only contacts the configured loopback Ollama endpoint and invokes the configured local LibreOffice executable without a shell. No document contents or filled values are logged.
+There is no cloud AI, external document service, telemetry, or remote font dependency. Readiness and explicitly requested AI analysis contact only the configured loopback Ollama endpoint. Readiness invokes the configured local LibreOffice executable without a shell. No document contents or filled values are logged.
 
 ## Troubleshooting and scope
 
@@ -138,4 +159,4 @@ There is no cloud AI, external document service, telemetry, or remote font depen
 - LibreOffice unavailable: check installation and the executable path. DOCX rendering still works without it. PDF export is a later milestone.
 - Native SQLite installation fails: use a supported Node LTS and reinstall dependencies. A compiler toolchain may be needed if a prebuilt binary is unavailable. pnpm is configured to allow the required SQLite/esbuild install scripts.
 
-Next milestone: **Phase 4 — Ollama-backed AI field suggestions**. AI detection, field review, template compilation, library forms and PDF export have not been implemented.
+Next milestone: **Phase 5 — Field review UI and safe template compilation**. Field approval/editing, template compilation/publication, library forms and PDF export have not been implemented.

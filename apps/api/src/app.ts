@@ -8,8 +8,10 @@ import type { HealthResponse } from '@studio/shared';
 import type { AppConfig } from './config.js';
 import { registerHealthRoute } from './routes/health.js';
 import { checkReadiness } from './services/readiness.js';
+import { registerAnalysisRoutes } from './routes/analysis.js';
+import type { FieldDetector } from './services/ai/field-detector.js';
 
-export function buildApp(config: AppConfig, readiness: () => Promise<HealthResponse> = () => checkReadiness(config)) {
+export function buildApp(config: AppConfig, readiness: () => Promise<HealthResponse> = () => checkReadiness(config), detector?: FieldDetector) {
   const maxUploadBytes = Math.max(1, Math.floor(config.MAX_UPLOAD_MB * 1024 * 1024));
   const app = Fastify({ logger: false, bodyLimit: maxUploadBytes });
   app.register(multipart, { limits: {
@@ -19,6 +21,7 @@ export function buildApp(config: AppConfig, readiness: () => Promise<HealthRespo
   registerHealthRoute(app, readiness);
   registerDevRenderRoute(app, maxUploadBytes);
   registerDocumentRoutes(app, config, maxUploadBytes);
+  registerAnalysisRoutes(app, config, maxUploadBytes, detector);
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof DocxError) {
       return reply.code(error.code === 'UPLOAD_TOO_LARGE' ? 413 : 422).send({ code: error.code, message: error.message });
