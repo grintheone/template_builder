@@ -13,7 +13,8 @@
     "build": "pnpm -r build",
     "start": "pnpm --filter @studio/api start",
     "db:migrate": "pnpm --filter @studio/api db:migrate",
-    "db:generate": "pnpm --filter @studio/api db:generate"
+    "db:generate": "pnpm --filter @studio/api db:generate",
+    "demo:fixture": "pnpm --filter @studio/api demo:fixture"
   },
   "devDependencies": {
     "typescript": "^5.9.3",

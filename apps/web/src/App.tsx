@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { FileText, RefreshCw, ShieldCheck, CircleCheck, CircleAlert, CircleDashed } from 'lucide-react';
 import { healthResponseSchema } from '@studio/shared';
 import { Button } from '@/components/ui/button';
+import { RenderDemo } from '@/features/render/RenderDemo';
 
 async function fetchHealth() {
   const response = await fetch('/api/health', { signal: AbortSignal.timeout(8000) });
@@ -35,7 +36,7 @@ export function App() {
           <StatusCard title="LibreOffice" ready={data?.libreOffice.available} detail={data?.libreOffice.binary ?? 'Configured local executable'} message={data?.libreOffice.message ?? fallback} />
         </div>
       </section>
-      <section className="mt-8 rounded-xl border border-dashed border-border p-6 sm:p-8"><p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Phase 1 · Foundation</p><h2 className="mt-3 text-lg font-semibold">A home for reusable documents</h2><p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">The local workspace is set up. Document import, field review, templates, and export will arrive in later phases.</p></section>
+      <RenderDemo />
       <footer className="mt-10 text-xs text-muted-foreground">Single user. Local storage. No cloud AI or telemetry.</footer>
     </main>
   </div>;
