@@ -128,6 +128,26 @@ pnpm build
 pnpm db:migrate
 ```
 
+Preparation for Phase 5 is documented in [the readiness report](docs/PRE_PHASE_5_READINESS.md)
+and [the approval/publication contract](docs/PHASE_5_CONTRACT.md). The compiler
+and review workflow remain unimplemented. The preparation includes generated
+source/expected-template acceptance fixtures; these do not verify a compiler yet.
+
+To run the opt-in live detector checks against three synthetic DOCX packages:
+
+```sh
+pnpm smoke:analysis
+```
+
+This requires local Ollama and the configured model. It saves synthetic sources,
+private suggestion JSON and a count-only report under a new ignored
+`data/storage/readiness-<uuid>/` directory (or the configured storage directory).
+It does not import documents into SQLite or publish templates. Passing safety
+checks does not mean complete/correct detection: check `detectionQuality` and the
+expected-location counts. Current `qwen3:8b` smoke results require manual review,
+including trimming whole-paragraph suggestions to the intended values. Ordinary
+`pnpm test` remains offline and does not run these model calls.
+
 `pnpm lint` uses Biome with Tailwind-aware parsing. `pnpm test` builds shared contracts first and runs shared-schema and API tests, including mocked offline services and Ollama suggestions, quote resolution, untrusted prompt boundaries, chunking/deduplication, timeout cancellation, durable job recovery/queue limits, invalid configuration, sanitized errors, migration and source persistence, generated DOCX fixtures, indexing and split-run offsets, source integrity failures, rendering/formatting preservation, and multipart failure cases. Tests do not require Ollama or LibreOffice. Database tests create and remove isolated temporary databases under ignored `data/storage/`.
 
 `pnpm db:generate` generates a Drizzle migration from API schema changes; inspect and commit the SQL and metadata. `pnpm db:migrate` applies committed migrations; startup also applies them idempotently.
