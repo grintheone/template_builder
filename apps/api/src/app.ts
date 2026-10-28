@@ -1,3 +1,5 @@
+import { registerReviewRoutes } from './routes/reviews.js';
+import { ReviewFailure } from './services/templates/errors.js';
 import { registerDocumentRoutes } from './routes/documents.js';
 import Fastify from 'fastify';
 import multipart from '@fastify/multipart';
@@ -22,7 +24,9 @@ export function buildApp(config: AppConfig, readiness: () => Promise<HealthRespo
   registerDevRenderRoute(app, maxUploadBytes);
   registerDocumentRoutes(app, config, maxUploadBytes);
   registerAnalysisRoutes(app, config, maxUploadBytes, detector);
+  registerReviewRoutes(app, config, maxUploadBytes);
   app.setErrorHandler((error, _request, reply) => {
+    if (error instanceof ReviewFailure) return reply.code(error.status).send(error.toJSON());
     if (error instanceof DocxError) {
       return reply.code(error.code === 'UPLOAD_TOO_LARGE' ? 413 : 422).send({ code: error.code, message: error.message });
     }

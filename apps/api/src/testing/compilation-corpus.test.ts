@@ -11,7 +11,7 @@ import { DocxRenderer } from '../services/docx/renderer.js';
 const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 const hash = (source: Buffer) => createHash('sha256').update(source).digest('hex');
 
-describe('pre-Phase 5 acceptance corpus (hand-authored outputs, no compiler yet)', () => {
+describe('independent compilation acceptance corpus (hand-authored expected outputs)', () => {
   for (const sample of compilationCorpus()) {
     it(`${sample.name}: verifies selected ranges, expected tags, structure and untouched parts`, async () => {
       const initialHash = hash(sample.source);

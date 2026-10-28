@@ -1,7 +1,8 @@
 # Phase 5 approval and publication contract
 
 Prepared 2026-10-28. This is the implementation contract for the next milestone;
-the routes, persistence and compiler described here are not implemented yet.
+Phase 5 now implements the routes, persistence and compiler described here;
+see `../PHASE_5_REPORT.md` for verification and remaining limitations.
 The current quote resolver remains the foundation; do not introduce a second
 matching algorithm with different text normalization or offset conventions.
 

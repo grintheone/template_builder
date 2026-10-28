@@ -1,11 +1,11 @@
 # Local AI DOCX Template Studio
 
-A single-user web app for working with reusable DOCX templates on your computer. **Phases 1–4 are implemented:** local services, deterministic rendering of already-tagged DOCX files, immutable source import/indexing, and Ollama-backed field suggestions through an asynchronous API.
+A single-user web app for working with reusable DOCX templates on your computer. **Phases 1–5 are implemented:** local services, tagged DOCX rendering, immutable source import/indexing, local AI suggestions, human review and safe compilation into immutable template versions.
 
 ## Requirements and launch
 
 - Node.js **22.12 or later** (a supported LTS recommended), pnpm **10.14.0**.
-- Ollama with the configured local model is required for AI analysis. Import, tagged DOCX rendering and automated tests work without it. LibreOffice remains optional.
+- Ollama with the configured local model is required for AI analysis. Import, manual review, template compilation, tagged DOCX rendering and automated tests work without it. LibreOffice remains optional.
 
 From the repository root:
 
@@ -31,9 +31,9 @@ Indexing covers body paragraphs, table cells, numbered headers/footers, repeated
 
 Tracked changes, field codes, text boxes, drawings, content controls, hidden text and unknown paragraph structures require manual review. Affected blocks are marked unsupported; their extracted text may be incomplete and cannot be treated as a safe replacement span. Tabs and breaks retain display offsets but disable replacement for the paragraph. Nested text-box paragraphs are indexed separately. Footnotes/endnotes remain preserved but are not indexed. Package-level warnings identify unsupported constructs even when they contain no paragraph. Macro/embedded-object packages, unsupported OPC parts, encryption, invalid XML and unsafe ZIP paths are rejected outright. The index has a 20,000 paragraph limit in addition to package limits.
 
-Import and indexing do not call AI. Analysis is a separate explicit API action below. The review UI, template compilation and Word-layout previews are not implemented.
+Import and indexing do not call AI. Analysis is a separate explicit API action below. The review UI and compiler are described below. Word-layout previews are not implemented.
 
-## Analyze with local Ollama (Phase 4 API)
+## Analyze with local Ollama
 
 Install/start Ollama and download the configured local model (`ollama pull qwen3:8b`). After importing a source in the dashboard, copy its document ID. Start analysis with an empty POST body:
 
@@ -45,13 +45,76 @@ curl --fail-with-body http://127.0.0.1:3001/api/analysis-jobs/JOB_ID
 
 Replace `DOCUMENT_ID` and `JOB_ID` with the returned UUIDs. Poll about once per second until `status` is `done` or `failed`. Responses disable caching. Job records contain the source hash, configured model, timestamps, status, and either `result` or a sanitized `error`. Suggestions include snake_case keys, labels, scalar types, required flags, confidence, and explicit source occurrences. Each occurrence retains `blockId`, exact `quote`, optional adjacent context and a generated ID. A `resolved` occurrence has UTF-16 `start`/`end` offsets; an `unresolved` occurrence has a reason and no offsets. Neither status constitutes human approval.
 
-Missing quotes, unknown block IDs, ambiguous repeated quotes, mismatched context, unsupported blocks and conflicting type/required metadata remain unresolved for review. Same-key occurrences are merged and exact duplicates removed; conflicting metadata requires review. Different keys with the same meaning are not automatically combined. Overlap validation and final XML-span safety belong to Phase 5. No replacement, source mutation, template publication or rendering is performed by analysis. The dashboard still provides import and extracted text only; starting/polling/review UI is Phase 5.
+Missing quotes, unknown block IDs, ambiguous repeated quotes, mismatched context, unsupported blocks and conflicting type/required metadata remain unresolved for review. Same-key occurrences are merged and exact duplicates removed; conflicting metadata requires review. Different keys with the same meaning are not automatically combined. Review saves and publication validate overlaps and final XML-span safety. No replacement, source mutation, template publication or rendering is performed by analysis. The dashboard also starts/polls analysis and lets you review suggestions.
 
 Jobs are persisted in SQLite before work starts. One job runs at a time with up to eight queued/admitting requests; excess requests return 429 with `Retry-After`. Repeated requests for the same active document return the existing job ID when capacity is available. Completed results and failures survive restarts. Pending/running jobs found at startup, or left at shutdown, become `failed` with `INTERRUPTED`; explicitly start a new analysis to retry. Invalid IDs/bodies return 400; missing documents/jobs return 404. Source-integrity failures return a sanitized 422 before queuing or a failed job if detected during processing.
 
 The detector uses the official Ollama client with JSON Schema output, temperature 0, no tools and thinking disabled. Indexed text is explicitly marked as untrusted document data in a separate user message. Only the configured loopback endpoint is contacted, redirects are refused, and cloud-named models are rejected by configuration. Configure a downloaded local model. Prompt instructions cannot guarantee model behavior: Zod and deterministic source matching check its output, and a person must assess every suggestion. Schema violations and malformed/truncated JSON fail the whole job rather than silently dropping candidates.
 
 Limits: whole source blocks are chunked into at most 64 requests of 12,000 serialized characters each; oversized individual blocks fail explicitly rather than being truncated. Blank blocks are skipped. The model response body is capped at 1 MiB before JSON parsing, each request permits up to 8,192 generated tokens, and analysis retains at most 500 keys and 2,000 distinct occurrences overall (1,000 per key). The entire job, including source verification and all chunks, defaults to a 120-second timeout. Cancellation aborts non-streaming HTTP requests. Raise `ANALYSIS_TIMEOUT_MS` (1,000–600,000) or use a smaller document when needed. A failure saves no partial suggestions. Errors distinguish offline Ollama, missing model, invalid output, limits, timeout and interrupted work; raw model/network errors are never logged or returned.
+
+## Review fields and publish a template (Phase 5)
+
+1. Import a populated DOCX without `[[` or `]]` text. The already-tagged demo is
+   for the separate renderer and cannot be published as a new source template.
+2. Click **Start local AI analysis**, or add manual selections without Ollama.
+   Polling displays progress and actionable failures. Suggestions remain pending
+   until you explicitly approve or reject each occurrence. The current model may
+   suggest whole paragraphs: manually select just the intended scalar value.
+3. Use **Select source text** to drag-select an exact range, or enter UTF-16 start
+   and exclusive end offsets. Choose an existing field to reuse its key, or give
+   a new field a snake_case key. Unsupported paragraphs are disabled. Correcting
+   an ambiguous suggestion manually records its original occurrence as rejected.
+4. Edit keys, labels, types, required flags, defaults and formatting. Remove any
+   unwanted fields/occurrences. Source highlights show approved locations; an
+   identical value elsewhere stays untouched. Cross-run replacements inherit the
+   first run's formatting, retaining surrounding runs and their properties.
+5. Click **Save review**, then **Publish saved review**. Each save increments the
+   review revision; unsaved changes disable publishing. Conflicts keep your edits
+   visible; explicitly reload saved state to discard them. Publication failures
+   also retain the saved review for correction/retry.
+
+The URL remembers the document and active job IDs, so refresh can restore saved
+review/polling state. Bookmark it, or paste the document ID into **Resume a saved
+document ID**. Unsaved edits stay in memory only. Suggestion decisions in a saved
+review remain tied to one completed analysis job; later analyses cannot replace
+those decisions. Manual edits remain available. The UI is an extracted text view,
+not a Word layout preview.
+
+`GET /api/documents/:id/fields` returns revision 0 for a source with no saved review.
+`PUT /api/documents/:id/fields` replaces the complete snapshot, using `sourceHash`,
+`expectedRevision`, optional `analysisJobId`, `fields` and `decisions`; see the
+strict shared schemas in `packages/shared/src/schemas/review.ts`. Quotes, offsets,
+Unicode boundaries, provenance, overlap, defaults and formatting are verified on
+the server. Omitting/deleting an accepted AI occurrence requires an explicit
+rejected decision. Limits are 100 fields and 2,000 approved occurrences; review
+JSON is limited to 4 MiB.
+
+`POST /api/documents/:id/publish` accepts only `{ sourceHash, reviewRevision }` and
+compiles the saved selection. It returns template/version UUIDs, version number,
+review revision, source hash, timestamp and frozen field schema, with no private
+paths. Publishing the same current revision returns the same version. Saving
+and publishing another review creates a new version under the same template;
+older schemas and files remain immutable. All review responses disable caching.
+Invalid shapes return 400, missing records 404, conflicts 409, unsafe/invalid
+selections or templates 422, and storage/commit failures sanitized 500 errors.
+
+The compiler verifies the original hash, rebuilds the index and patches only
+approved `<w:t>` text using original XML coordinates. It preserves untouched
+markup in changed parts and every non-target ZIP entry's contents. Overlaps,
+unsafe Unicode boundaries, cross-paragraph/hyperlink/bookmark/permission/field-code
+ranges and existing delimiters fail explicitly. Compiled tag counts must match
+approved occurrences; package validation and a scalar-only Docxtemplater trial
+render must pass before a file/version is committed. No AI is used in compilation.
+Some otherwise untouched unsupported constructs can prevent publication because
+the existing renderer cannot safely process them.
+
+Compiled files are private, exclusively created under `data/storage/templates/`.
+A short SQLite transaction rechecks the revision after compilation; failed
+commits remove unpublished files. Startup removes UUID-named unreferenced compiler
+files older than 24 hours, preserving recent in-flight writes, referenced versions
+and all originals. This handles process-crash orphans; it does not repair files
+manually removed or corrupted outside the app.
 
 ## Try the Phase 2 DOCX renderer
 
@@ -129,9 +192,9 @@ pnpm db:migrate
 ```
 
 Preparation for Phase 5 is documented in [the readiness report](docs/PRE_PHASE_5_READINESS.md)
-and [the approval/publication contract](docs/PHASE_5_CONTRACT.md). The compiler
-and review workflow remain unimplemented. The preparation includes generated
-source/expected-template acceptance fixtures; these do not verify a compiler yet.
+and [the approval/publication contract](docs/PHASE_5_CONTRACT.md). Phase 5 implements the compiler
+and review workflow. Its compiler tests compare actual output against the independent
+source/expected-template acceptance fixtures, including all ZIP entry bytes.
 
 To run the opt-in live detector checks against three synthetic DOCX packages:
 
@@ -148,7 +211,7 @@ expected-location counts. Current `qwen3:8b` smoke results require manual review
 including trimming whole-paragraph suggestions to the intended values. Ordinary
 `pnpm test` remains offline and does not run these model calls.
 
-`pnpm lint` uses Biome with Tailwind-aware parsing. `pnpm test` builds shared contracts first and runs shared-schema and API tests, including mocked offline services and Ollama suggestions, quote resolution, untrusted prompt boundaries, chunking/deduplication, timeout cancellation, durable job recovery/queue limits, invalid configuration, sanitized errors, migration and source persistence, generated DOCX fixtures, indexing and split-run offsets, source integrity failures, rendering/formatting preservation, and multipart failure cases. Tests do not require Ollama or LibreOffice. Database tests create and remove isolated temporary databases under ignored `data/storage/`.
+`pnpm lint` uses Biome with Tailwind-aware parsing. `pnpm test` builds shared contracts first and runs shared-schema, API and stateful React review tests, including mocked offline services and Ollama suggestions, quote resolution, untrusted prompt boundaries, chunking/deduplication, timeout cancellation, durable job recovery/queue limits, invalid configuration, sanitized errors, migration and source persistence, generated DOCX fixtures, indexing and split-run offsets, source integrity failures, rendering/formatting preservation, and multipart failure cases. Tests do not require Ollama or LibreOffice. Database tests create and remove isolated temporary databases under ignored `data/storage/`.
 
 `pnpm db:generate` generates a Drizzle migration from API schema changes; inspect and commit the SQL and metadata. `pnpm db:migrate` applies committed migrations; startup also applies them idempotently.
 
@@ -165,7 +228,7 @@ Open http://127.0.0.1:4173. `pnpm start` runs the built API; Vite preview proxie
 
 ## Workspace
 
-- `apps/web`: React, Vite, Tailwind CSS v4, shadcn-compatible component aliases, CSS tokens and Button; TanStack Query drives readiness. React Hook Form validates the tagged-DOCX rendering demo; published-template forms are a later milestone.
+- `apps/web`: React, Vite, Tailwind CSS v4, shadcn-compatible component aliases, CSS tokens and Button; TanStack Query drives readiness, source loading and analysis polling. React Hook Form handles manual range selection and the tagged-DOCX demo; published-template input forms are Phase 6.
 - `apps/api`: Fastify, bounded multipart uploads, DOCX package validation, Docxtemplater/PizZip renderer, local readiness services, and SQLite/Drizzle migrations.
 - `packages/shared`: shared Zod health, render-value and error contracts with inferred TypeScript types.
 
@@ -179,4 +242,4 @@ There is no cloud AI, external document service, telemetry, or remote font depen
 - LibreOffice unavailable: check installation and the executable path. DOCX rendering still works without it. PDF export is a later milestone.
 - Native SQLite installation fails: use a supported Node LTS and reinstall dependencies. A compiler toolchain may be needed if a prebuilt binary is unavailable. pnpm is configured to allow the required SQLite/esbuild install scripts.
 
-Next milestone: **Phase 5 — Field review UI and safe template compilation**. Field approval/editing, template compilation/publication, library forms and PDF export have not been implemented.
+Next milestone: **Phase 6 — Template library, forms and document export**. The saved-template library, dynamic fill forms, production rendering endpoint and PDF conversion are not implemented yet.

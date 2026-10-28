@@ -28,7 +28,7 @@ export class DocumentStore {
     } catch (error) { await unlink(sourcePath); throw error; }
     return { documentId, sourceHash };
   }
-  async blocks(documentId: string) {
+  async source(documentId: string) {
     const record = this.database.db.select().from(documents).where(eq(documents.id, documentId)).get();
     if (!record) return undefined;
     const expected = resolve(this.config.STORAGE_DIR, 'originals', `${documentId}.docx`);
@@ -36,6 +36,11 @@ export class DocumentStore {
     const source = await readFile(localDataPath(record.sourcePath));
     if (hash(source) !== record.sourceHash) throw new Error('Source integrity check failed');
     await validatePackage(source, this.maxUploadBytes, 'import');
-    return { documentId, sourceHash: record.sourceHash, ...indexDocx(source) };
+    return { documentId, sourceHash: record.sourceHash, source };
+  }
+  async blocks(documentId: string) {
+    const record = await this.source(documentId);
+    if (!record) return undefined;
+    return { documentId, sourceHash: record.sourceHash, ...indexDocx(record.source) };
   }
 }
