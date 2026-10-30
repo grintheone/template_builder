@@ -11,8 +11,9 @@ const CONTENT_NS = 'http://schemas.openxmlformats.org/package/2006/content-types
 const MAIN_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml';
 export const editablePart = /^word\/(?:document|header\d+|footer\d+)\.xml$/;
 
-// Deliberately conservative POC allowlist. Embedded objects, macros, signatures,
-// charts and custom XML need explicit support in subsequent milestones.
+// Passive Word parts are preserved verbatim, even when their text is not indexed.
+// Keep explicit families: arbitrary XML/binaries, embeddings, macros, signatures
+// and external resources must not become accepted just to support complex layouts.
 function allowedPart(path: string): boolean {
   return path === '[Content_Types].xml' || path === '_rels/.rels'
     || /^docProps\/(?:core|app|custom)\.xml$/.test(path)
@@ -20,15 +21,30 @@ function allowedPart(path: string): boolean {
     || /^word\/(?:document|styles|stylesWithEffects|settings|webSettings|fontTable|numbering|footnotes|endnotes|header\d+|footer\d+)\.xml$/.test(path)
     || /^word\/_rels\/(?:document|header\d+|footer\d+|footnotes|endnotes|fontTable)\.xml\.rels$/.test(path)
     || /^word\/theme\/theme\d+\.xml$/.test(path)
-    || /^word\/media\/[A-Za-z0-9_.-]+\.(?:png|jpg|jpeg|gif|bmp|tif|tiff|emf|wmf|svg)$/.test(path)
+    || /^word\/(?:comments|commentsExtended|commentsExtensible|commentsIds|people)\.xml$/.test(path)
+    || /^word\/_rels\/comments\.xml\.rels$/.test(path)
+    || /^word\/charts\/(?:chart\d+|style\d+|colors\d+)\.xml$/.test(path)
+    || /^word\/charts\/_rels\/chart\d+\.xml\.rels$/.test(path)
+    || /^word\/diagrams\/(?:data|drawing|layout|quickStyle|colors)\d+\.xml$/.test(path)
+    || /^word\/diagrams\/_rels\/(?:data|drawing|layout|quickStyle|colors)\d+\.xml\.rels$/.test(path)
+    || /^customXml\/(?:item\d+|itemProps\d+)\.xml$/.test(path)
+    || /^customXml\/_rels\/item\d+\.xml\.rels$/.test(path)
+    || /^word\/media\/[A-Za-z0-9_. -]+\.(?:png|jpg|jpeg|gif|bmp|tif|tiff|emf|wmf|svg|wdp|jxr)$/i.test(path)
     || /^word\/fonts\/[A-Za-z0-9_.-]+\.(?:odttf|ttf)$/.test(path);
 }
 
 function invalid(): never {
   throw new DocxError('INVALID_DOCX', 'The file is not a valid, unencrypted DOCX package.');
 }
-function unsupported(): never {
-  throw new DocxError('UNSUPPORTED_DOCX', 'This DOCX contains parts or structures outside the supported package allowlist. Use a standard DOCX with body, table, header, and footer text.');
+function unsupported(reason = 'This DOCX contains an unsupported document structure.'): never {
+  throw new DocxError('UNSUPPORTED_DOCX', reason);
+}
+function unsupportedPart(path: string): never {
+  // Fixed categories only: private filenames and document content never leave validation.
+  if (/vba|activeX/i.test(path)) unsupported('This DOCX contains macros or ActiveX components. Save a macro-free DOCX copy before importing.');
+  if (/^word\/embeddings\//.test(path)) unsupported('This DOCX contains embedded objects or workbooks. Remove embedded objects in a copy before importing; ordinary images and tables are supported.');
+  if (/^_xmlsignatures\//.test(path)) unsupported('Digitally signed DOCX packages cannot be edited safely. Import an unsigned copy.');
+  unsupported('This DOCX contains a package part outside the supported allowlist. Tables, embedded images, comments, charts without embedded workbooks, SmartArt and custom XML are supported; other package extensions require additional support.');
 }
 
 function openZip(buffer: Buffer): Promise<ZipFile> {
@@ -66,7 +82,7 @@ async function readEntries(buffer: Buffer): Promise<Map<string, Buffer>> {
         if (name.includes('\\') || name.startsWith('/') || name.split('/').some((segment) => segment === '..' || segment === '.') || name.includes('\0') || parts.has(name)) invalid();
         // ZIP directory entries contain no document content.
         if (name.endsWith('/')) { if (entry.uncompressedSize !== 0) invalid(); zip.readEntry(); return; }
-        if (!allowedPart(name)) unsupported();
+        if (!allowedPart(name)) unsupportedPart(name);
         const stream = await new Promise<import('node:stream').Readable>((resolveStream, rejectStream) => {
           zip.openReadStream(entry, (error, result) => { if (error) rejectStream(error); else resolveStream(result); });
         });
@@ -93,7 +109,7 @@ async function readEntries(buffer: Buffer): Promise<Map<string, Buffer>> {
 
 export function parseXml(buffer: Buffer) {
   const text = new TextDecoder('utf-8', { fatal: true }).decode(buffer);
-  if (/<!DOCTYPE|<!ENTITY/i.test(text)) unsupported();
+  if (/<!DOCTYPE|<!ENTITY/i.test(text)) unsupported('DOCX XML containing DTDs or entity declarations is not supported.');
   // Bound depth and element count before allocating a DOM or walking it
   // recursively. Quoted attributes, comments and CDATA cannot fake nesting.
   const tokens = /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>|<\/?[A-Za-z_][^<>"']*(?:(?:"[^"]*"|'[^']*')[^<>"']*)*>/g;
@@ -124,7 +140,8 @@ export async function validatePackage(source: Buffer, maxUploadBytes: number, mo
         if (document.documentElement?.namespaceURI !== CONTENT_NS) invalid();
         const overrides = Array.from(document.getElementsByTagNameNS(CONTENT_NS, 'Override'));
         if (!overrides.some((node) => node.getAttribute('PartName') === '/word/document.xml' && node.getAttribute('ContentType') === MAIN_TYPE)) invalid();
-        if (overrides.some((node) => /macroEnabled|vbaProject|activeX/i.test(node.getAttribute('ContentType') ?? ''))) unsupported();
+        const declarations = [...overrides, ...Array.from(document.getElementsByTagNameNS(CONTENT_NS, 'Default'))];
+        if (declarations.some((node) => /macroEnabled|vbaProject|activeX|oleObject/i.test(node.getAttribute('ContentType') ?? ''))) unsupported('This DOCX declares macros, ActiveX components or embedded objects. Save a plain DOCX copy before importing.');
       }
       if (editablePart.test(path)) {
         if (document.documentElement?.namespaceURI !== WORD_NS) unsupported();
@@ -133,19 +150,19 @@ export async function validatePackage(source: Buffer, maxUploadBytes: number, mo
         if (expectedRoot === 'document' && document.getElementsByTagNameNS(WORD_NS, 'body').length !== 1) invalid();
         // Rendering fields inside tracked edits, text boxes or field codes is out of scope.
         for (const tag of ['ins', 'del', 'moveFrom', 'moveTo', 'txbxContent', 'fldSimple', 'instrText', 'altChunk']) {
-          if (mode === 'render' && document.getElementsByTagNameNS(WORD_NS, tag).length) unsupported();
+          if (mode === 'render' && document.getElementsByTagNameNS(WORD_NS, tag).length) unsupported('This DOCX contains tracked edits, text boxes, field codes or imported content that the renderer cannot safely process. Simplify those structures in a copy before publishing or rendering.');
         }
       } else if (path.endsWith('.xml') && path !== '[Content_Types].xml') {
         // Never silently leave tags in notes, metadata or other unrendered parts.
-        const visible = Array.from(document.getElementsByTagNameNS(WORD_NS, 't')).map((node) => node.textContent).join('');
-        if (mode === 'render' && (visible.includes('[[') || visible.includes(']]'))) unsupported();
+        const visible = document.documentElement?.textContent ?? '';
+        if (mode === 'render' && (visible.includes('[[') || visible.includes(']]'))) unsupported('Template delimiters in preserved metadata, comments, charts, diagrams or notes cannot be rendered. Remove those delimiters before publishing or rendering.');
       }
       if (path.endsWith('.rels')) {
         const relationships = Array.from(document.getElementsByTagNameNS('http://schemas.openxmlformats.org/package/2006/relationships', 'Relationship'));
         for (const relation of relationships) {
           const type = relation.getAttribute('Type') ?? '';
-          if (/attachedTemplate|oleObject|aFChunk|vbaProject/i.test(type)) unsupported();
-          if (relation.getAttribute('TargetMode') === 'External' && !type.endsWith('/hyperlink')) unsupported();
+          if (/attachedTemplate|oleObject|aFChunk|vbaProject|activeX|\/package$/i.test(type)) unsupported('This DOCX references an attached template, embedded object, workbook or active content. Remove that reference in a copy before importing.');
+          if (relation.getAttribute('TargetMode') === 'External' && !type.endsWith('/hyperlink')) unsupported('This DOCX links to an external resource such as an image or template. Embed the resource or remove the link in a copy before importing.');
         }
       }
     }

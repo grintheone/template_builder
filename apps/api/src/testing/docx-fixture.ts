@@ -45,3 +45,36 @@ export function createDocxFixture(options: { body?: string; header?: string; foo
   zip.file('word/media/pixel.png', Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9l8AAAAASUVORK5CYII=', 'base64'));
   return zip.generate({ type: 'nodebuffer', compression: 'DEFLATE' });
 }
+
+// Passive package extensions commonly written by Word. Retains the base fixture's
+// table, image, numbering and headers/footers for preservation regression tests.
+export function createComplexDocxFixture(): Buffer {
+  const zip = new PizZip(createDocxFixture());
+  const extras: [string, string, string][] = [
+    ['word/comments.xml', 'application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml', `<w:comments xmlns:w="${W}"><w:comment w:id="0" w:author="Reviewer">${paragraph('Keep this comment')}</w:comment></w:comments>`],
+    ['word/commentsExtended.xml', 'application/vnd.ms-word.commentsExtended+xml', '<w15:commentsEx xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml"/>'],
+    ['word/charts/chart1.xml', 'application/vnd.openxmlformats-officedocument.drawingml.chart+xml', '<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart><c:plotArea><c:layout/><c:barChart><c:barDir val="col"/><c:grouping val="clustered"/></c:barChart></c:plotArea><c:plotVisOnly val="1"/></c:chart></c:chartSpace>'],
+    ['word/charts/style1.xml', 'application/vnd.ms-office.chartstyle+xml', '<cs:chartStyle xmlns:cs="http://schemas.microsoft.com/office/drawing/2012/chartStyle" id="102"/>'],
+    ['word/diagrams/data1.xml', 'application/vnd.openxmlformats-officedocument.drawingml.diagramData+xml', '<dgm:dataModel xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram"><dgm:ptLst/><dgm:cxnLst/></dgm:dataModel>'],
+    ['customXml/item1.xml', 'application/xml', '<record xmlns="urn:fixture"><name>Static bound data</name></record>'],
+    ['customXml/itemProps1.xml', 'application/vnd.openxmlformats-officedocument.customXmlProperties+xml', '<ds:datastoreItem xmlns:ds="http://schemas.openxmlformats.org/officeDocument/2006/customXml" ds:itemID="{11111111-1111-1111-1111-111111111111}"><ds:schemaRefs/></ds:datastoreItem>'],
+  ];
+  for (const [path, , xml] of extras) zip.file(path, xml);
+  zip.file('[Content_Types].xml', zip.file('[Content_Types].xml')?.asText().replace('</Types>', `${extras.map(([path, type]) => `<Override PartName="/${path}" ContentType="${type}"/>`).join('')}</Types>`) ?? '');
+  zip.file('word/_rels/document.xml.rels', zip.file('word/_rels/document.xml.rels')?.asText().replace('</Relationships>', [
+    `<Relationship Id="rId7" Type="${R}/comments" Target="comments.xml"/>`,
+    `<Relationship Id="rId8" Type="${R}/chart" Target="charts/chart1.xml"/>`,
+    `<Relationship Id="rId9" Type="${R}/diagramData" Target="diagrams/data1.xml"/>`,
+    `<Relationship Id="rId10" Type="${R}/customXml" Target="../customXml/item1.xml"/>`,
+    '</Relationships>',
+  ].join('')) ?? '');
+  zip.file('customXml/_rels/item1.xml.rels', `<Relationships xmlns="${P}"><Relationship Id="rId1" Type="${R}/customXmlProps" Target="itemProps1.xml"/></Relationships>`);
+  zip.file('word/charts/_rels/chart1.xml.rels', `<Relationships xmlns="${P}"><Relationship Id="rId1" Type="http://schemas.microsoft.com/office/2011/relationships/chartStyle" Target="style1.xml"/></Relationships>`);
+  const document = zip.file('word/document.xml')?.asText() ?? '';
+  zip.file('word/document.xml', document.replace('<w:body>', `<w:body>${paragraph('Alex')}<w:p><w:commentRangeStart w:id="0"/><w:r><w:t>Commented clause</w:t></w:r><w:commentRangeEnd w:id="0"/><w:r><w:commentReference w:id="0"/></w:r></w:p>`));
+  // This source is populated, ready for manual selection and compilation.
+  for (const path of ['word/document.xml', 'word/header1.xml', 'word/footer1.xml']) {
+    zip.file(path, (zip.file(path)?.asText() ?? '').replaceAll('[[client_name]]', 'Original client').replaceAll('[[amount]]', '5000').replace('[[client_', 'Original ').replace('name]]', 'client'));
+  }
+  return zip.generate({ type: 'nodebuffer', compression: 'DEFLATE' });
+}

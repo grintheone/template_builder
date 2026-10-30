@@ -79,5 +79,10 @@ export function indexDocx(source: Buffer) {
     }
   }
   for (const path of ['word/footnotes.xml', 'word/endnotes.xml']) if (zip.file(path)) warnings.add(`${path}: note text is preserved but not indexed.`);
+  const paths = Object.keys(zip.files);
+  if (paths.some((path) => /^word\/(?:comments|people)/.test(path))) warnings.add('Comments and review metadata are preserved but are not available as template fields. Paragraphs containing comment markers require manual review.');
+  if (paths.some((path) => path.startsWith('word/charts/'))) warnings.add('Charts are preserved; chart labels and data are not indexed or editable as template fields.');
+  if (paths.some((path) => path.startsWith('word/diagrams/'))) warnings.add('SmartArt diagrams are preserved; diagram text is not indexed or editable as template fields.');
+  if (paths.some((path) => path.startsWith('customXml/'))) warnings.add('Custom XML data is preserved but is not indexed or updated. Bound content controls require manual review.');
   return { blocks, warnings: [...warnings] };
 }

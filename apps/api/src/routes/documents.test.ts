@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { documentBlocksSchema, documentImportSchema } from '@studio/shared';
 import { buildApp } from '../app.js';
 import { readConfig } from '../config.js';
-import { createDocxFixture } from '../testing/docx-fixture.js';
+import { createComplexDocxFixture, createDocxFixture } from '../testing/docx-fixture.js';
 
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0)) await close(); });
@@ -25,6 +25,19 @@ function upload(source = createDocxFixture(), filename = 'source.docx') {
   ]) };
 }
 describe('document import API', () => {
+  it('imports tables/images with comments, charts, diagrams and custom XML, preserving the complete source', async () => {
+    const { app, config } = setup();
+    const source = createComplexDocxFixture();
+    const response = await app.inject(upload(source));
+    expect(response.statusCode).toBe(201);
+    const { documentId } = documentImportSchema.parse(response.json());
+    expect(readFileSync(resolve(config.STORAGE_DIR, 'originals', `${documentId}.docx`))).toEqual(source);
+    const result = await app.inject(`/api/documents/${documentId}/blocks`);
+    const index = documentBlocksSchema.parse(result.json());
+    expect(index.warnings.join(' ')).toMatch(/Charts are preserved/);
+    expect(index.blocks.find((b) => b.text === 'Alex')?.supported).toBe(true);
+    expect(index.blocks.find((b) => b.text === 'Commented clause')?.supported).toBe(false);
+  });
   it('persists exact immutable bytes, hash and stable index across restarts', async () => {
     const { app, config } = setup();
     const source = createDocxFixture();
