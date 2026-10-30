@@ -1,6 +1,6 @@
 # Local AI DOCX Template Studio
 
-A single-user web app for working with reusable DOCX templates on your computer. **Phases 1–5 are implemented:** local services, tagged DOCX rendering, immutable source import/indexing, local AI suggestions, human review and safe compilation into immutable template versions.
+A single-user web app for working with reusable DOCX templates on your computer. **Phases 1–6 are implemented:** local services, immutable source import/indexing, local AI suggestions, human review, safe compilation, a searchable published-template library, dynamic forms and DOCX/PDF export.
 
 ## Requirements and launch
 
@@ -116,6 +116,57 @@ files older than 24 hours, preserving recent in-flight writes, referenced versio
 and all originals. This handles process-crash orphans; it does not repair files
 manually removed or corrupted outside the app.
 
+## Fill and export a published template (Phase 6)
+
+1. Launch with `pnpm dev` and open http://127.0.0.1:5173.
+2. Publish a saved review. The **Template library** refreshes automatically.
+3. Search by template ID, field label or key, then select a template. Templates
+   currently have generated titles (`Template <ID prefix>`); renaming is not included.
+4. Fill the text, date, number and currency controls. Saved defaults prefill the
+   form. Required values must be supplied; optional blanks export as empty text.
+5. Choose Word or PDF and click **Download document**. PDF requires LibreOffice;
+   the service status shows installation/configuration errors. Failed exports retain
+   form values so you can retry or switch to DOCX.
+
+DOCX generation reads only the published schema and compiled file. It verifies the
+compiled SHA-256 hash and never invokes Ollama. Stop Ollama and repeat the export
+to verify this. Originals and published files are never modified by rendering.
+Forms show the published version; render requests explicitly pin its version UUID
+so a newer publication cannot silently change an in-flight request's schema.
+
+The library lists the latest version of each template, newest first. Dates export
+as `YYYY-MM-DD`, without timezone conversion. Number/currency values must be finite
+JSON numbers and use the published `Intl.NumberFormat` locale, currency and optional
+precision. When precision is specified, it fixes both minimum and maximum fraction
+digits; otherwise standard Intl defaults apply. Numeric inputs accept decimal
+values, not already formatted currency strings. Client and server share Zod
+validation. Server errors never echo submitted values.
+
+- `GET /api/templates`: latest published metadata and form fields, without source
+  occurrences, original text or private paths.
+- `GET /api/templates/:id`: latest detail/schema.
+- `POST /api/templates/:id/render`: strict JSON
+  `{ "versionId": "<published version UUID>", "format": "docx", "values": { "client_name": "Иван Петров" } }`.
+  Use `pdf` for PDF. Unknown keys, invalid dates/types, and missing or blank required
+  fields fail. Defaults are form conveniences and do not bypass required validation.
+  Requests are limited to 64 KiB. Success streams an attachment named `document.docx`
+  or `document.pdf`, with `Cache-Control: no-store`.
+
+PDF conversion uses the configured `SOFFICE_PATH` executable directly with an
+argument array and no shell. Each conversion has fixed internal filenames, its own
+private directory/profile under `data/storage/temporary/`, a 60-second timeout,
+64 KiB process-output limit and 50 MiB PDF size limit. Temporary input/output/profile
+files are removed on success, failure or timeout. One PDF conversion is allowed at
+a time per API process; concurrent requests receive a retryable 503. Generated
+DOCX/PDF files are not retained by the service after the response. Browser downloads
+remain in your download folder. A process crash may leave temporary files; startup
+expiry cleanup is part of Phase 7.
+
+Missing LibreOffice returns an actionable 503; failed conversion returns sanitized
+422. Successful conversion requires a PDF file, not just exit code zero. Word and
+LibreOffice may paginate differently; PDF is not a Word-native fidelity guarantee.
+Optional in-browser PDF preview is not implemented in this phase.
+
 ## Try the Phase 2 DOCX renderer
 
 Start the app with `pnpm dev`, then generate a representative, already-tagged sample:
@@ -135,7 +186,7 @@ On the dashboard, use **Try a tagged DOCX** to choose `data/storage/demo-tagged.
 
 Click **Render and download DOCX** and open `rendered.docx` in Word or LibreOffice. Repeat with different values to check that the original stays unchanged. No Ollama request or LibreOffice invocation occurs during DOCX rendering.
 
-For a custom template, manually insert `[[client_name]]`, `[[amount]]`, or other scalar tags in Word. Every distinct tag is required in this proof of concept. Values must have exactly the matching snake_case keys, with text or finite numbers. An explicit empty string means blank; missing and unknown keys are rejected. Strings are inserted as text with XML escaping; embedded markup is never interpreted. Newlines become Word line breaks. Numbers use their JavaScript decimal representation; locale/date/currency formatting is deferred to later phases.
+For a custom template, manually insert `[[client_name]]`, `[[amount]]`, or other scalar tags in Word. Every distinct tag is required in this proof of concept. Values must have exactly the matching snake_case keys, with text or finite numbers. An explicit empty string means blank; missing and unknown keys are rejected. Strings are inserted as text with XML escaping; embedded markup is never interpreted. Newlines become Word line breaks. This development endpoint uses JavaScript decimal numbers. Published-template forms use their saved date/locale/currency formatting.
 
 The development endpoint is `POST /api/dev/render`. It is deliberately separate from the planned saved-template render endpoint because no template is stored or published here. It accepts multipart/form-data with exactly one `template` file and one `values` JSON field, in either order:
 
@@ -175,7 +226,7 @@ The API loads the root `.env` regardless of its working directory. Existing envi
 
 Database and storage paths resolve relative to the repository and must stay inside `data/`; existing symlink paths are rejected. Keep `.env` private. The development rendering route processes uploads and results in memory without saving them. The import route retains immutable originals on private local disk. The demo-fixture command explicitly writes its sample under `data/storage/`. Browser downloads go to your browser's configured download location.
 
-For optional local services on macOS, install/launch Ollama using its official app, then run `ollama pull qwen3:8b`. Install LibreOffice and set `SOFFICE_PATH=/Applications/LibreOffice.app/Contents/MacOS/soffice` if it is not on PATH. This phase checks the binary using `--version`; actual PDF conversion is a later milestone.
+For optional local services on macOS, install/launch Ollama using its official app, then run `ollama pull qwen3:8b`. Install LibreOffice and set `SOFFICE_PATH=/Applications/LibreOffice.app/Contents/MacOS/soffice` if it is not on PATH. Readiness checks the binary using `--version`; PDF export invokes a separate headless conversion with a private temporary profile.
 
 `GET /api/health` returns HTTP 200 while optional services are offline. It distinguishes Ollama server availability from configured-model availability and includes actionable messages. Each check has a two-second timeout. The dashboard refreshes every 15 seconds. It reports unknown status if the API cannot be reached.
 
@@ -228,7 +279,7 @@ Open http://127.0.0.1:4173. `pnpm start` runs the built API; Vite preview proxie
 
 ## Workspace
 
-- `apps/web`: React, Vite, Tailwind CSS v4, shadcn-compatible component aliases, CSS tokens and Button; TanStack Query drives readiness, source loading and analysis polling. React Hook Form handles manual range selection and the tagged-DOCX demo; published-template input forms are Phase 6.
+- `apps/web`: React, Vite, Tailwind CSS v4, shadcn-compatible component aliases, CSS tokens and Button; TanStack Query drives readiness, source loading and analysis polling. React Hook Form handles manual range selection and the tagged-DOCX demo; published-template input forms use the shared Zod field contract.
 - `apps/api`: Fastify, bounded multipart uploads, DOCX package validation, Docxtemplater/PizZip renderer, local readiness services, and SQLite/Drizzle migrations.
 - `packages/shared`: shared Zod health, render-value and error contracts with inferred TypeScript types.
 
@@ -239,7 +290,7 @@ There is no cloud AI, external document service, telemetry, or remote font depen
 - API startup error: check `.env`, writable `data/`, or an occupied `API_PORT`. Invalid local-only settings fail closed with a sanitized error.
 - Port 5173 already in use: stop the conflicting process; Vite uses a strict port.
 - Ollama unavailable: start the local service and verify the endpoint. A running service without the selected model shows a separate model-install message.
-- LibreOffice unavailable: check installation and the executable path. DOCX rendering still works without it. PDF export is a later milestone.
+- LibreOffice unavailable: check installation and the executable path. DOCX rendering still works without it. The library disables PDF until LibreOffice reports ready; DOCX export remains available.
 - Native SQLite installation fails: use a supported Node LTS and reinstall dependencies. A compiler toolchain may be needed if a prebuilt binary is unavailable. pnpm is configured to allow the required SQLite/esbuild install scripts.
 
-Next milestone: **Phase 6 — Template library, forms and document export**. The saved-template library, dynamic fill forms, production rendering endpoint and PDF conversion are not implemented yet.
+Next milestone: **Phase 7 — Reliability, UX and final verification**. Final workflow hardening, the complete end-to-end acceptance test and real-service verification remain.

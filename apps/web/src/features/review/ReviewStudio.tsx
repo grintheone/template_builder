@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { analysisJobSchema, analysisStartedSchema, reviewSnapshotSchema, saveReviewSchema, publishedVersionSchema, type ReviewSnapshot, type SourceBlock, type ReviewedField, type PublishedVersion } from '@studio/shared';
 import { Button } from '@/components/ui/button';
@@ -21,6 +21,7 @@ export function ReviewStudio({ documentId, sourceHash, blocks }: { documentId: s
   </div>;
 }
 function ReviewEditor({ initial, sourceHash, blocks }: { initial: ReviewSnapshot; sourceHash: string; blocks: SourceBlock[] }) {
+  const queryClient = useQueryClient();
   const [review, setReview] = useState(initial);
   const [dirty, setDirty] = useState(false);
   const [jobId, setJobId] = useState(initial.analysisJobId);
@@ -49,6 +50,8 @@ function ReviewEditor({ initial, sourceHash, blocks }: { initial: ReviewSnapshot
       if (publish) {
         const result = publishedVersionSchema.parse(await api(`/api/documents/${review.documentId}/publish`, 'POST', { sourceHash, reviewRevision: review.revision }));
         setVersion(result);
+        void queryClient.invalidateQueries({ queryKey: ['templates'] });
+        void queryClient.invalidateQueries({ queryKey: ['template', result.templateId] });
       } else {
         const { documentId: _id, revision, ...selection } = review;
         const input = saveReviewSchema.safeParse({ ...selection, expectedRevision: revision });

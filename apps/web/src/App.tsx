@@ -1,3 +1,4 @@
+import { TemplateLibrary } from '@/features/render/TemplateLibrary';
 import { DocumentImport } from '@/features/documents/DocumentImport';
 import { useQuery } from '@tanstack/react-query';
 import { FileText, RefreshCw, ShieldCheck, CircleCheck, CircleAlert, CircleDashed } from 'lucide-react';
@@ -37,6 +38,7 @@ export function App() {
           <StatusCard title="LibreOffice" ready={data?.libreOffice.available} detail={data?.libreOffice.binary ?? 'Configured local executable'} message={data?.libreOffice.message ?? fallback} />
         </div>
       </section>
+      <TemplateLibrary pdfAvailable={data?.libreOffice.available} />
       <DocumentImport />
       <RenderDemo />
       <footer className="mt-10 text-xs text-muted-foreground">Single user. Local storage. No cloud AI or telemetry.</footer>

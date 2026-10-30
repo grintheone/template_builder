@@ -1,3 +1,5 @@
+import { registerTemplateRoutes } from './routes/templates.js';
+import { ExportFailure } from './services/templates/export-error.js';
 import { registerReviewRoutes } from './routes/reviews.js';
 import { ReviewFailure } from './services/templates/errors.js';
 import { registerDocumentRoutes } from './routes/documents.js';
@@ -25,7 +27,9 @@ export function buildApp(config: AppConfig, readiness: () => Promise<HealthRespo
   registerDocumentRoutes(app, config, maxUploadBytes);
   registerAnalysisRoutes(app, config, maxUploadBytes, detector);
   registerReviewRoutes(app, config, maxUploadBytes);
+  registerTemplateRoutes(app, config, maxUploadBytes);
   app.setErrorHandler((error, _request, reply) => {
+    if (error instanceof ExportFailure) return reply.code(error.status).send({ code: error.code, message: error.message });
     if (error instanceof ReviewFailure) return reply.code(error.status).send(error.toJSON());
     if (error instanceof DocxError) {
       return reply.code(error.code === 'UPLOAD_TOO_LARGE' ? 413 : 422).send({ code: error.code, message: error.message });
