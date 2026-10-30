@@ -55,7 +55,7 @@ describe('document import API', () => {
     expect((await app.inject(upload(undefined, name))).statusCode).toBe(422);
     expect(readdirSync(config.STORAGE_DIR)).toEqual([]);
   });
-  it.each(['invalid zip', 'missing main', 'traversal', 'unknown part', 'malformed XML', 'expanded size', 'encrypted'])('rejects %s', async (kind) => {
+  it.each(['invalid zip', 'missing main', 'traversal', 'unknown part', 'malformed XML', 'expanded size', 'encrypted', 'checksum', 'XML depth', 'XML elements', 'DTD'])('rejects %s', async (kind) => {
     const { app } = setup();
     const zip = new PizZip(createDocxFixture());
     if (kind === 'missing main') zip.remove('word/document.xml');
@@ -63,13 +63,20 @@ describe('document import API', () => {
     if (kind === 'unknown part') zip.file('word/vbaProject.bin', 'bad');
     if (kind === 'malformed XML') zip.file('word/document.xml', '<broken>');
     if (kind === 'expanded size') zip.file('word/styles.xml', 'x'.repeat(10 * 1024 * 1024 + 1));
+    if (kind === 'XML depth') zip.file('word/styles.xml', '<a>'.repeat(129) + '</a>'.repeat(129));
+    if (kind === 'XML elements') zip.file('word/styles.xml', `<a>${'<b/>'.repeat(100000)}</a>`);
+    if (kind === 'DTD') zip.file('word/styles.xml', '<!DOCTYPE a [<!ENTITY secret "private data">]><a>&secret;</a>');
     const source = kind === 'invalid zip' ? Buffer.from('private data') : zip.generate({ type: 'nodebuffer', compression: 'DEFLATE' });
     if (kind === 'encrypted') {
       const central = source.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
       source.writeUInt16LE(source.readUInt16LE(central + 8) | 1, central + 8);
     }
+    if (kind === 'checksum') {
+      const central = source.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
+      source.writeUInt32LE(0, central + 16);
+    }
     const response = await app.inject(upload(source));
-    expect(response.statusCode).toBe(kind === 'expanded size' ? 413 : 422);
+    expect(response.statusCode).toBe(['expanded size', 'XML depth', 'XML elements'].includes(kind) ? 413 : 422);
     expect(response.body).not.toContain('private data');
   });
   it('rejects oversized uploads and malformed/missing IDs', async () => {

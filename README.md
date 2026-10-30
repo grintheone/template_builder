@@ -1,6 +1,6 @@
 # Local AI DOCX Template Studio
 
-A single-user web app for working with reusable DOCX templates on your computer. **Phases 1–6 are implemented:** local services, immutable source import/indexing, local AI suggestions, human review, safe compilation, a searchable published-template library, dynamic forms and DOCX/PDF export.
+A single-user web app for working with reusable DOCX templates on your computer. **Phases 1–7 are implemented:** local services, immutable source import/indexing, local AI suggestions, human review, safe compilation, a searchable published-template library, dynamic forms, DOCX/PDF export and workflow hardening.
 
 ## Requirements and launch
 
@@ -19,9 +19,50 @@ Open **http://127.0.0.1:5173**. Fastify listens on **http://127.0.0.1:3001**. Vi
 
 The API creates `data/app.sqlite`, applies committed migrations, and creates `data/storage/` on startup. Nothing needs to be seeded. Runtime data, SQLite sidecars, environment secrets, dependencies, and build artifacts are gitignored.
 
+### macOS setup from a clean machine
+
+Install Git, Node.js >=22.12, pnpm 10.14.0, Ollama and LibreOffice. With Homebrew:
+
+```sh
+brew install git node
+npm install --global pnpm@10.14.0
+brew install --cask ollama libreoffice
+# Launch Ollama from Applications, then download the local model:
+ollama pull qwen3:8b
+ollama list
+node --version
+pnpm --version
+```
+
+Use pnpm 10.14.0 to match the repository's `packageManager`. Open Terminal in this
+repository, run the launch commands above, and leave that terminal running while
+using the app. The supplied `.env.example` sets the macOS LibreOffice executable.
+If SQLite needs a compiler during installation, install Apple's command-line tools
+with `xcode-select --install`, then retry `pnpm install`.
+
+### Five-minute demo
+
+1. Run `pnpm demo:fixture`. This creates **starter-agreement.docx** in
+   `data/storage/` (or your configured storage folder), plus a separate tagged demo.
+2. Open the app and import **starter-agreement.docx**. Inspect its paragraphs,
+   salary table, employer header and employee footer.
+3. Start local AI analysis. Approve or correct the scalar ranges. Use one
+   `employee_name` field for the employee in both agreement paragraphs and the
+   footer. Leave the unrelated sentence about author John Smith unchanged.
+   Set salary to currency, dates to date, and working hours to number. Without
+   Ollama, use manual selections to create the same fields.
+4. Save the review, publish it, and select the result in **Template library**.
+5. Enter a different employer/employee, valid dates, salary and hours. Download
+   DOCX and PDF. Open both locally to inspect the layout and repeated values.
+6. Quit Ollama and export the published template again. DOCX and PDF generation
+   use the saved version. The imported source remains byte-for-byte unchanged.
+
+AI output varies and always needs review. A sentence or paragraph suggestion
+must be narrowed manually to the intended value before publishing.
+
 ## Import and inspect a DOCX
 
-Start with `pnpm dev`, open **http://127.0.0.1:5173**, and use **Import a source DOCX**. Choose a standard `.docx` and click **Import and inspect**. The page displays the saved document ID, SHA-256 hash, source paragraphs and structural warnings. The existing `pnpm demo:fixture` sample can also be imported; its tags are treated as ordinary source text.
+Start with `pnpm dev`, open **http://127.0.0.1:5173**, and use **Import a source DOCX**. Choose a standard `.docx` and click **Import and inspect**. The page displays the saved document ID, SHA-256 hash, source paragraphs and structural warnings. Use the populated `starter-agreement.docx` sample for this workflow; `demo-tagged.docx` is for the separate tagged renderer.
 
 `POST /api/documents` accepts multipart/form-data with exactly one file in the `document` field and no additional fields. It returns HTTP 201 with `{ documentId, sourceHash }`. `GET /api/documents/:id/blocks` returns those identifiers plus `blocks` and document-level `warnings`. Invalid IDs return 400; missing documents return 404. Both responses disable caching. Upload limits return 413; unsupported or invalid documents return sanitized 422 errors.
 
@@ -159,8 +200,10 @@ private directory/profile under `data/storage/temporary/`, a 60-second timeout,
 files are removed on success, failure or timeout. One PDF conversion is allowed at
 a time per API process; concurrent requests receive a retryable 503. Generated
 DOCX/PDF files are not retained by the service after the response. Browser downloads
-remain in your download folder. A process crash may leave temporary files; startup
-expiry cleanup is part of Phase 7.
+remain in your download folder. After a process crash, startup and subsequent PDF
+exports remove converter directories older than 24 hours. Recent directories,
+symlinks, unrelated files, originals and published templates are preserved. If no
+further conversion occurs, restart the API to trigger expiry cleanup.
 
 Missing LibreOffice returns an actionable 503; failed conversion returns sanitized
 422. Successful conversion requires a PDF file, not just exit code zero. Word and
@@ -205,6 +248,7 @@ A successful response is a DOCX attachment named `rendered.docx`. Validation fai
 - `.docx` only, validated as an unencrypted ZIP/OPC package with required main document, content types and relationships. Corrupt archives, unsafe paths, macros and non-allowlisted parts are rejected. XML must be well-formed UTF-8 without DTDs/entities.
 - Only scalar text replacements in body paragraphs, table cells, headers and footers. Loops, conditions, expressions, raw XML/image substitution, tracked edits, text boxes, embedded objects and field codes are outside this proof of concept. Tags in other text parts are rejected rather than left silently unfilled. Charts, custom XML and signed packages are also outside its conservative package allowlist.
 - Uploads default to 15 MiB; values JSON is limited to 64 KiB, 100 fields, and 10,000 characters per string. ZIP expansion is limited to 1,000 entries, 10 MiB per part and 50 MiB total. Output expansion is conservatively bounded before rendering, so unusually large repeated or multiline values can be rejected.
+- ZIP entry checksums are verified after bounded streaming validation. XML is limited to 128 nesting levels and 100,000 elements per part before DOM allocation; DTDs and entities are rejected. HTTP uploads have a two-minute request/connection timeout.
 - All non-target ZIP part contents remain byte-identical. Docxtemplater handles text-run replacement inside target parts; the whole ZIP container is regenerated. Source input bytes are never mutated.
 - Unicode text is preserved. Its appearance in Word/LibreOffice depends on locally available fonts; install suitable fonts if characters appear blank or as boxes. This is not a pixel-perfect Word preview.
 
@@ -285,12 +329,58 @@ Open http://127.0.0.1:4173. `pnpm start` runs the built API; Vite preview proxie
 
 There is no cloud AI, external document service, telemetry, or remote font dependency. Readiness and explicitly requested AI analysis contact only the configured loopback Ollama endpoint. Readiness invokes the configured local LibreOffice executable without a shell. No document contents or filled values are logged.
 
+API requests require a loopback Host header. Remote/null browser origins and
+cross-site browser requests are refused before request parsing. This protects
+against hostile websites posting to localhost and DNS rebinding; the app must
+still run as a trusted single-user process on your own machine. All API responses
+disable caching, including errors. Fastify request logging and Docxtemplater's
+raw error logging are disabled; errors use fixed, sanitized messages.
+
+Documents, reviews, analysis results, defaults and published templates remain in
+`data/` until you remove them. They are private filesystem data, **not encrypted
+storage**. Use normal disk protection/backups and avoid shared computers. There
+is no data-management/delete UI in this MVP. Browser downloads remain on disk.
+
+### Full workflow verification
+
+`pnpm test` includes a representative API integration test for import → mocked
+Ollama detection → explicit approval/rejection → publication → restart → dynamic
+schema validation → DOCX rendering. It checks split runs, all four field types,
+tables/headers/footers, Unicode, unrelated same-name prose, untouched ZIP parts
+and immutable original bytes/hash. Additional failure tests cover unsafe ZIPs,
+XML complexity, cross-site requests and expired temporary directories.
+
+For opt-in verification with your real local Ollama/model **and LibreOffice**:
+
+```sh
+pnpm smoke:workflow
+```
+
+This uses a separate synthetic database/storage directory under
+`data/storage/workflow-smoke-<random>/`, runs real detection, explicitly rejects
+model candidates in favor of known scalar demo selections, publishes, restarts
+with a detector that fails if called, and exports DOCX/PDF. It validates the
+DOCX text and original hash, saves `filled.docx`, `filled.pdf` and `report.json`
+for inspection, and prints counts only. Both optional dependencies must be ready;
+missing dependencies produce a nonzero exit and readiness messages. These opt-in
+synthetic artifacts are retained intentionally and can be removed when finished.
+This API check does not replace the browser/visual walkthrough above or establish
+that the model selected every field correctly.
+
 ## Troubleshooting and scope
 
 - API startup error: check `.env`, writable `data/`, or an occupied `API_PORT`. Invalid local-only settings fail closed with a sanitized error.
 - Port 5173 already in use: stop the conflicting process; Vite uses a strict port.
 - Ollama unavailable: start the local service and verify the endpoint. A running service without the selected model shows a separate model-install message.
 - LibreOffice unavailable: check installation and the executable path. DOCX rendering still works without it. The library disables PDF until LibreOffice reports ready; DOCX export remains available.
+- `LOCAL_ACCESS_ONLY`: open `http://127.0.0.1:5173` directly. Remote origins, custom hostnames and cross-site requests are intentionally refused; do not expose either server through a public proxy.
+- Upload/complexity limit: use a smaller standard DOCX. The API rejects oversized ZIP expansion, excessive XML nesting/elements and too many paragraphs instead of truncating content.
+- Unsupported DOCX: use a copy in Word/LibreOffice to accept tracked changes or simplify unsupported structures, then re-import. Keep the original elsewhere. Warnings are not permission to flatten the file; unsupported ranges cannot be approved safely.
+- Analysis timeout or invalid AI output: retry with a smaller source or a larger `ANALYSIS_TIMEOUT_MS` within the documented limit. Manual review/selection works without AI; raw model output is never treated as approval.
+- PDF conversion failed/busy: wait for the current conversion or try DOCX. Check `SOFFICE_PATH` and local storage permissions; conversion has a 60-second limit. A valid PDF signature is required even if LibreOffice exits successfully.
 - Native SQLite installation fails: use a supported Node LTS and reinstall dependencies. A compiler toolchain may be needed if a prebuilt binary is unavailable. pnpm is configured to allow the required SQLite/esbuild install scripts.
 
-Next milestone: **Phase 7 — Reliability, UX and final verification**. Final workflow hardening, the complete end-to-end acceptance test and real-service verification remain.
+The seven planned milestones are complete. Next is user acceptance using your own
+representative documents and the manual walkthrough above. Word-native previews,
+rich text/image replacement, repeated sections, remote access and multi-user use
+remain outside this MVP.

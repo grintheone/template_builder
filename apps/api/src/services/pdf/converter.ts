@@ -4,6 +4,7 @@ import { mkdtemp, writeFile, readFile, rm, stat, mkdir } from 'node:fs/promises'
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { ExportFailure } from '../templates/export-error.js';
+import { cleanupExpiredExports } from '../../storage/temporary.js';
 
 const execute = promisify(execFile);
 export class PdfConverter {
@@ -15,6 +16,7 @@ export class PdfConverter {
     let directory: string | undefined;
     try {
       await mkdir(this.tempRoot, { recursive: true, mode: 0o700 });
+      await cleanupExpiredExports(this.tempRoot);
       directory = await mkdtemp(resolve(this.tempRoot, 'export-'));
       const input = resolve(directory, 'document.docx');
       await writeFile(input, docx, { mode: 0o600 });

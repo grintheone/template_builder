@@ -14,10 +14,12 @@ import { registerHealthRoute } from './routes/health.js';
 import { checkReadiness } from './services/readiness.js';
 import { registerAnalysisRoutes } from './routes/analysis.js';
 import type { FieldDetector } from './services/ai/field-detector.js';
+import { registerLocalAccess } from './local-access.js';
 
 export function buildApp(config: AppConfig, readiness: () => Promise<HealthResponse> = () => checkReadiness(config), detector?: FieldDetector) {
   const maxUploadBytes = Math.max(1, Math.floor(config.MAX_UPLOAD_MB * 1024 * 1024));
-  const app = Fastify({ logger: false, bodyLimit: maxUploadBytes });
+  const app = Fastify({ logger: false, bodyLimit: maxUploadBytes, requestTimeout: 120000, connectionTimeout: 120000 });
+  registerLocalAccess(app);
   app.register(multipart, { limits: {
     fileSize: maxUploadBytes, files: 1, fields: 1, parts: 2,
     fieldSize: MAX_VALUES_BYTES, fieldNameSize: 32, headerPairs: 50,

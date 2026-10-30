@@ -12,7 +12,8 @@
     "db:migrate": "tsx src/db/migrate.ts",
     "db:generate": "drizzle-kit generate",
     "demo:fixture": "tsx src/testing/create-demo.ts",
-    "smoke:analysis": "tsx src/testing/smoke-analysis.ts"
+    "smoke:analysis": "tsx src/testing/smoke-analysis.ts",
+    "smoke:workflow": "tsx src/testing/smoke-workflow.ts"
   },
   "dependencies": {
     "@fastify/multipart": "^10.1.6",

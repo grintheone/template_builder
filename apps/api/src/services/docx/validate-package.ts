@@ -1,4 +1,5 @@
 import { DOMParser } from '@xmldom/xmldom';
+import PizZip from 'pizzip';
 import { fromBuffer, type Entry, type ZipFile } from 'yauzl';
 import { DocxError } from './errors.js';
 
@@ -93,6 +94,17 @@ async function readEntries(buffer: Buffer): Promise<Map<string, Buffer>> {
 export function parseXml(buffer: Buffer) {
   const text = new TextDecoder('utf-8', { fatal: true }).decode(buffer);
   if (/<!DOCTYPE|<!ENTITY/i.test(text)) unsupported();
+  // Bound depth and element count before allocating a DOM or walking it
+  // recursively. Quoted attributes, comments and CDATA cannot fake nesting.
+  const tokens = /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>|<\/?[A-Za-z_][^<>"']*(?:(?:"[^"]*"|'[^']*')[^<>"']*)*>/g;
+  let depth = 0;
+  let elements = 0;
+  for (const [token] of text.matchAll(tokens)) {
+    if (/^<[!?]/.test(token)) continue;
+    if (token.startsWith('</')) depth--;
+    else { elements++; if (!token.endsWith('/>')) depth++; }
+    if (depth > 128 || elements > 100000) throw new DocxError('UPLOAD_TOO_LARGE', 'The DOCX XML exceeds safe complexity limits (128 levels, 100,000 elements per part).');
+  }
   return new DOMParser({ onError: () => { throw new Error('Invalid XML'); } }).parseFromString(text, 'application/xml');
 }
 
@@ -101,6 +113,9 @@ export async function validatePackage(source: Buffer, maxUploadBytes: number, mo
   if (source.length < 4 || source.readUInt32LE(0) !== 0x04034b50) invalid();
   try {
     const parts = await readEntries(source);
+    // Only let PizZip inflate after streaming size validation has bounded it.
+    // yauzl checks sizes, but does not verify entry checksums.
+    new PizZip(source, { checkCRC32: true });
     if (!parts.has('[Content_Types].xml') || !parts.has('_rels/.rels') || !parts.has('word/document.xml')) invalid();
     for (const [path, content] of parts) {
       if (!/\.(?:xml|rels)$/.test(path)) continue;

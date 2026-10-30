@@ -7,11 +7,14 @@ import { TemplateStore } from '../storage/templates.js';
 import { DocxRenderer } from '../services/docx/renderer.js';
 import { PdfConverter } from '../services/pdf/converter.js';
 import { ExportFailure } from '../services/templates/export-error.js';
+import { cleanupExpiredExports } from '../storage/temporary.js';
 
 export function registerTemplateRoutes(app: FastifyInstance, config: AppConfig, maxBytes: number) {
   const store = new TemplateStore(config);
   const renderer = new DocxRenderer(maxBytes);
-  const pdf = new PdfConverter(config.SOFFICE_PATH, localDataPath(resolve(config.STORAGE_DIR, 'temporary')));
+  const temporary = localDataPath(resolve(config.STORAGE_DIR, 'temporary'));
+  const pdf = new PdfConverter(config.SOFFICE_PATH, temporary);
+  app.addHook('onReady', () => cleanupExpiredExports(temporary));
   app.addHook('onClose', async () => store.close());
   app.get('/api/templates', async (_request, reply) => { reply.header('Cache-Control', 'no-store'); return store.list(); });
   for (const method of ['GET', 'POST'] as const) app.route<{ Params: { id: string } }>({

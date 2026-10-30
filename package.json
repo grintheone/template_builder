@@ -15,7 +15,8 @@
     "db:migrate": "pnpm --filter @studio/api db:migrate",
     "db:generate": "pnpm --filter @studio/api db:generate",
     "demo:fixture": "pnpm --filter @studio/api demo:fixture",
-    "smoke:analysis": "pnpm --filter @studio/shared build && pnpm --filter @studio/api smoke:analysis"
+    "smoke:analysis": "pnpm --filter @studio/shared build && pnpm --filter @studio/api smoke:analysis",
+    "smoke:workflow": "pnpm --filter @studio/shared build && pnpm --filter @studio/api smoke:workflow"
   },
   "devDependencies": {
     "typescript": "^5.9.3",
